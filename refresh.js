@@ -1,5 +1,5 @@
 // FaceCard HQ refresher. GitHub Actions runs this every 10 minutes.
-// It pulls Supabase + RevenueCat, writes the objection summary with Claude, encrypts everything
+// It pulls Supabase + RevenueCat and the athletes' objections, encrypts everything
 // with HQ_PASSWORD and saves it to Supabase (table hq_public). facecard.tech/hq decrypts it in the browser.
 // The dashboard code, config and history live in bundle.enc, encrypted with the same password.
 // Secrets: HQ_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_KEY, REVENUECAT_API_KEY, ANTHROPIC_API_KEY
@@ -139,6 +139,16 @@ async function insightFor(wk) {
   return text;
 }
 
+// Page tweaks applied on top of the encrypted page (so small changes don't need a new bundle.enc).
+function patchUI(html) {
+  const swaps = [
+    ["'<p class=\"insight\">' + esc(insight || fallbackInsight(wk, cats, counts)) + '</p>' +",
+     "wk.slice().reverse().slice(0, 6).map(function (o) { return '<div class=\"quote\" style=\"font-size:15px;color:var(--ink)\">' + esc(o.text) + '<small>' + esc(o.name || 'Someone') + ' \u00b7 ' + esc(o.cat) + ' \u00b7 ' + new Date(o.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + '</small></div>'; }).join('') +"]
+  ];
+  swaps.forEach(([a, b]) => { if (html.includes(a)) html = html.replace(a, b); });
+  return html;
+}
+
 // ---------- main ----------
 (async () => {
   for (const k of ['HQ_PASSWORD', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY']) if (!env[k]) throw new Error('Missing secret ' + k);
@@ -163,7 +173,7 @@ async function insightFor(wk) {
 
   const label = 'Updated ' + new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' ET';
   const data = { sb, rc, meta: { label, warn: warn.join(' '), at: new Date().toISOString() }, objections, insight, cfg: FC.CONFIG };
-  const blob = await seal({ html: bundle.ui, data }, env.HQ_PASSWORD);
+  const blob = await seal({ html: patchUI(bundle.ui), data }, env.HQ_PASSWORD);
   await sbUpsert('hq_public', { id: 1, blob, updated_at: new Date().toISOString() }, 'id');
   const n = Object.keys(sb.users || {}).length;
   console.log(label + ' | supabase users ' + n + ' | revenuecat customers ' + Object.keys(rc).length + ' | objections ' + objections.length + (warn.length ? ' | WARN ' + warn.join(' ') : ''));
