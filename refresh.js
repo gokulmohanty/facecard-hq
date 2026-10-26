@@ -145,7 +145,7 @@ async function insightFor(wk) {
 // A full pull runs every 6 hours; a newly pasted link is looked up on the next 30-minute run.
 // Results are kept in hq_store (key 'content') so each video builds a history of snapshots.
 const CONTENT_EVERY_MS = 6 * 3600e3 - 10 * 60e3;
-const OWN = { instagram: ['facecard.skin'], tiktok: ['facecard.skin'], youtube: [] };
+const OWN = { instagram: ['facecard.skin'], tiktok: ['facecard.skin'], youtube: ['facecard_skin'] };
 async function apify(actor, input) {
   const url = 'https://api.apify.com/v2/acts/' + actor + '/run-sync-get-dataset-items?timeout=280&token=' + encodeURIComponent(env.APIFY_TOKEN);
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
@@ -210,6 +210,17 @@ async function pullFollowers(prev) {
       if (t) f.tiktok = t;
     }
   } catch (e) { console.log('TT followers: ' + e.message); }
+  try {
+    if (OWN.youtube.length) {
+      let t = 0, got = false;
+      for (const h of OWN.youtube) {
+        const items = await apify('streamers~youtube-scraper', { startUrls: [{ url: 'https://www.youtube.com/@' + h }], maxResults: 1, maxResultsShorts: 1, maxResultStreams: 0 });
+        const it = items.find((x) => x.numberOfSubscribers != null || x.channelSubscriberCount != null);
+        if (it) { got = true; t += n0(it.numberOfSubscribers != null ? it.numberOfSubscribers : it.channelSubscriberCount); }
+      }
+      if (got) f.youtube = t;
+    }
+  } catch (e) { console.log('YT followers: ' + e.message); }
   return f;
 }
 function ownerCode(handle, FC) {
