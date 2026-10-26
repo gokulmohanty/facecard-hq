@@ -268,7 +268,12 @@ async function fetchContent(FC, warn) {
     pulled = true;
   }
   const content = { updated: pulled ? new Date().toISOString() : prev.updated, lastPull: prev.lastPull, followers: prev.followers || {}, videos };
-  const shown = Object.assign({}, content, { videos: videos.filter((v) => v.snaps.length) });
+  // The live page (facecard_site hq.html) reads `snapshots`, top-level totals and `owner`; keep `snaps`/`creator` for the bundled page.
+  const shown = Object.assign({}, content, { videos: videos.filter((v) => v.snaps.length).map((v) => {
+    const last = v.snaps[v.snaps.length - 1] || {};
+    return Object.assign({}, v, { snapshots: v.snaps, views: last.views || 0, likes: last.likes || 0, comments: last.comments || 0, shares: last.shares || 0, saves: last.saves || 0,
+      owner: !v.creator || v.creator === 'FACECARD' ? 'FaceCard' : v.creator });
+  }) });
   if (pulled || videos.length !== (prev.videos || []).length) {
     try { await sbUpsert('hq_store', { key: 'content', value: content, updated_at: new Date().toISOString() }, 'key'); }
     catch (e) { console.log('Content save: ' + e.message); }
