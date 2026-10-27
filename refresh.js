@@ -3,6 +3,8 @@
 // with HQ_PASSWORD and saves it to Supabase (table hq_public). facecard.tech/hq decrypts it in the browser.
 // The dashboard code, config and history live in bundle.enc, encrypted with the same password.
 // Secrets: HQ_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_KEY, REVENUECAT_API_KEY, ANTHROPIC_API_KEY, APIFY_TOKEN (content tab)
+// Also read from Supabase each run: the roster (table reps), config overrides (hq_store key 'config',
+// e.g. {"appleTakeHome": 0.85}) and the facecard.tech/go link taps (views link_click_counts, link_click_daily).
 const fs = require('fs'), zlib = require('zlib'), { webcrypto: crypto } = require('crypto');
 const env = process.env;
 for (const k of Object.keys(env)) if (typeof env[k] === 'string') env[k] = env[k].trim();
@@ -300,6 +302,27 @@ function patchUI(html) {
   const FC = mod.exports;
 
   const warn = [];
+  // The roster lives in Supabase (table reps): a new creator is one row there, no new bundle.enc.
+  // A row overrides the bundle's entry with the same code; blanks keep the bundle's value.
+  try {
+    const reps = await sbGet('reps?select=code,name,active,team,city,role,is_lead,instagram,tiktok,youtube&order=created_at.asc');
+    const byCode = {}; (FC.CONFIG.roster || []).forEach((r) => { byCode[r.code] = r; });
+    const roster = [];
+    reps.forEach((r) => {
+      if (!r.code) return;
+      const old = byCode[r.code] || {}; delete byCode[r.code];
+      if (r.active === false || r.code === 'TEST') return;
+      roster.push(Object.assign({}, old, { code: r.code, name: r.name || old.name || r.code, city: r.city || old.city || '', role: r.role || old.role || 'Athlete',
+        lead: !!(r.is_lead || old.lead), team: r.team || old.team || null, ig: r.instagram || old.ig || '', tt: r.tiktok || old.tt || '', yt: r.youtube || old.yt || '' }));
+    });
+    Object.keys(byCode).forEach((k) => roster.push(byCode[k])); // codes only the bundle knows stay as they are
+    if (roster.length) FC.CONFIG.roster = roster;
+  } catch (e) { warn.push('Reps: ' + e.message); }
+  // Config overrides without a new bundle.enc: upsert hq_store {key: 'config', value: {...}}.
+  try {
+    const r = await sbGet('hq_store?select=value&key=eq.config');
+    if (r[0] && r[0].value && typeof r[0].value === 'object') Object.assign(FC.CONFIG, r[0].value);
+  } catch (e) {}
   let sb = { users: {}, excluded: {}, rows: 0 };
   try { sb = FC.sanitize(FC.fromSupabase(await fetchSupabaseRows())); } catch (e) { warn.push('Supabase: ' + e.message); }
   let rc = {};
@@ -316,11 +339,18 @@ function patchUI(html) {
   let content = null;
   try { content = await fetchContent(FC, warn); } catch (e) { console.log('Content: ' + e.message); }
 
+  // Taps on facecard.tech/go/<CODE> (the website logs them into link_clicks; link previews and crawlers are not counted).
+  let links = null;
+  try {
+    const [counts, daily] = await Promise.all([sbGet('link_click_counts?select=*'), sbGet('link_click_daily?select=*&order=day.asc')]);
+    links = { counts, daily };
+  } catch (e) { console.log('Link clicks: ' + e.message); }
+
   const label = 'Updated ' + new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' ET';
-  const data = { sb, rc, meta: { label, warn: warn.join(' '), at: new Date().toISOString() }, objections, insight, cfg: FC.CONFIG, content };
+  const data = { sb, rc, meta: { label, warn: warn.join(' '), at: new Date().toISOString() }, objections, insight, cfg: FC.CONFIG, content, links };
   const blob = await seal({ html: patchUI(bundle.ui), data }, env.HQ_PASSWORD);
   await sbUpsert('hq_public', { id: 1, blob, updated_at: new Date().toISOString() }, 'id');
   const n = Object.keys(sb.users || {}).length;
-  console.log(label + ' | supabase users ' + n + ' | revenuecat customers ' + Object.keys(rc).length + ' | objections ' + objections.length + ' | videos ' + (content ? content.videos.length : 0) + (warn.length ? ' | WARN ' + warn.join(' ') : ''));
+  console.log(label + ' | supabase users ' + n + ' | revenuecat customers ' + Object.keys(rc).length + ' | objections ' + objections.length + ' | videos ' + (content ? content.videos.length : 0) + ' | roster ' + (FC.CONFIG.roster || []).length + ' | link codes ' + (links ? links.counts.length : 0) + (warn.length ? ' | WARN ' + warn.join(' ') : ''));
   if (warn.length && !n) process.exit(1);
 })().catch((e) => { console.error(e.message); process.exit(1); });
