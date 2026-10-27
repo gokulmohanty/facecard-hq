@@ -345,9 +345,13 @@ function patchUI(html) {
     const [counts, daily] = await Promise.all([sbGet('link_click_counts?select=*'), sbGet('link_click_daily?select=*&order=day.asc')]);
     links = { counts, daily };
   } catch (e) { console.log('Link clicks: ' + e.message); }
+  // Per rep: sign-ups, trials and paying users split by how the code arrived
+  // ('typed' in person, 'link' pasted from the creator's go link, 'prompt').
+  let sources = null;
+  try { sources = await sbGet('report_rep_sources?select=*'); } catch (e) { console.log('Rep sources: ' + e.message); }
 
   const label = 'Updated ' + new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' ET';
-  const data = { sb, rc, meta: { label, warn: warn.join(' '), at: new Date().toISOString() }, objections, insight, cfg: FC.CONFIG, content, links };
+  const data = { sb, rc, meta: { label, warn: warn.join(' '), at: new Date().toISOString() }, objections, insight, cfg: FC.CONFIG, content, links, sources };
   const blob = await seal({ html: patchUI(bundle.ui), data }, env.HQ_PASSWORD);
   await sbUpsert('hq_public', { id: 1, blob, updated_at: new Date().toISOString() }, 'id');
   const n = Object.keys(sb.users || {}).length;
