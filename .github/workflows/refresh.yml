@@ -1,7 +1,6 @@
 name: Refresh FaceCard HQ
+# Runs on every push (and by hand). The 30-minute cadence lives in refresh-loop.yml.
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
   push:
     branches: [main]

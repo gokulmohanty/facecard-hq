@@ -1,0 +1,47 @@
+# Keeps HQ fresh every 30 minutes. GitHub delays scheduled runs on free repos by hours, so instead of
+# relying on cron, one job runs refresh.js every 30 minutes for ~5.5 hours, then starts the next job
+# itself (workflow_dispatch from GITHUB_TOKEN is allowed to trigger runs). The 6-hourly schedule only
+# restarts the chain if it ever breaks. Pushes still refresh at once through refresh.yml.
+name: HQ refresh loop
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+concurrency:
+  group: hq-loop
+  cancel-in-progress: false
+permissions:
+  actions: write
+  contents: read
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Refresh every 30 minutes for 5.5 hours
+        run: |
+          end=$((SECONDS + 330*60))
+          while [ $SECONDS -lt $end ]; do
+            start=$SECONDS
+            git fetch -q --depth=1 origin main && git reset -q --hard origin/main || echo "fetch failed, using the last code"
+            node refresh.js || echo "refresh failed, retrying in 30 minutes"
+            wait=$((1800 - (SECONDS - start)))
+            [ $((SECONDS + wait)) -lt $end ] || break
+            if [ $wait -gt 0 ]; then sleep $wait; fi
+          done
+        env:
+          HQ_PASSWORD: ${{ secrets.HQ_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          REVENUECAT_API_KEY: ${{ secrets.REVENUECAT_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+      - name: Start the next run
+        if: always()
+        run: gh workflow run refresh-loop.yml --ref main -R "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
